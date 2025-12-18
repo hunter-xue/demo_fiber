@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>华为 DC908 保护策略演示 (1+1 vs 1:1)</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050a10; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        
+        #header {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            z-index: 100;
+            pointer-events: none;
+            background: rgba(0,0,0,0.7);
+            padding: 15px;
+            border-left: 4px solid #00ffff;
+            backdrop-filter: blur(4px);
+            border-radius: 0 4px 4px 0;
+            box-shadow: 0 0 15px rgba(0,0,0,0.5);
+        }
+        h1 { margin: 0; font-size: 20px; text-shadow: 0 0 10px #00ffff; color: #fff; }
+        .subtitle { color: #aaa; font-size: 12px; margin-top: 5px; }
+        .tag { display: inline-block; background: #004455; color: #00ffff; padding: 2px 6px; border-radius: 3px; font-size: 11px; margin-right: 5px; border: 1px solid #0088aa; }
+        .highlight { color: #ffaa00; font-weight: bold; }
+
+        #controls-container {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 340px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            max-height: 95vh;
+            overflow-y: auto;
+        }
+
+        .panel {
+            background: rgba(10, 25, 40, 0.9);
+            border: 1px solid #006688;
+            padding: 15px;
+            border-radius: 6px;
+            color: #ccc;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        }
+
+        .section-title {
+            color: #00ffff;
+            font-size: 13px;
+            font-weight: bold;
+            border-bottom: 1px solid #004455;
+            padding-bottom: 5px;
+            margin-bottom: 10px;
+        }
+
+        button {
+            background: linear-gradient(to bottom, #003344, #002233);
+            border: 1px solid #005566;
+            color: #ddd;
+            padding: 8px;
+            width: 100%;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 12px;
+            margin-bottom: 6px;
+            text-align: left;
+        }
+        button:hover { background: #004455; border-color: #007799; color: white; }
+        
+        button.active { 
+            background: linear-gradient(to right, #004466, #002233); 
+            border-left: 3px solid #00ffff; 
+            color: #fff; 
+        }
+        
+        /* 策略切换按钮 */
+        .strategy-btn {
+            text-align: center;
+            font-weight: bold;
+            border: 1px solid #00aaaa;
+        }
+        .strategy-btn.selected {
+            background: #00ccff;
+            color: #000;
+            box-shadow: 0 0 10px #00ccff;
+        }
+        
+        button.danger { border-color: #883333; color: #ffcccc; }
+        button.danger.active { background: #441111; border-left: 3px solid #ff0000; color: #ff5555; }
+
+        .ai-box { display: flex; gap: 5px; margin-bottom: 10px; }
+        input[type="text"] {
+            flex: 1;
+            background: rgba(0,0,0,0.4);
+            border: 1px solid #005566;
+            color: white;
+            padding: 6px;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+        .ai-btn { width: auto; background: #005566; }
+        #ai-output { font-family: monospace; font-size: 11px; color: #00ffaa; background: rgba(0,0,0,0.6); padding: 8px; min-height: 40px; white-space: pre-wrap; }
+        
+        .status-val.ok { color: #00ff00; }
+        .status-val.warn { color: #ffaa00; }
+        .status-val.err { color: #ff3333; }
+        .status-val.idle { color: #888; font-style: italic; }
+
+        .legend { font-size: 11px; color: #888; margin-top: 5px; display: flex; flex-wrap: wrap; gap: 8px; }
+        .legend-item { display: flex; align-items: center; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+    </style>
+</head>
+<body>
+
+    <div id="header">
+        <h1>华为 DC908 保护策略演示</h1>
+        <div class="subtitle">策略控制: 支持 1+1并发 与 1:1主备 动态切换</div>
+        <div style="margin-top: 10px;">
+            <span class="tag">当前模式: <span id="mode-badge" class="highlight">1+1 (并发)</span></span>
+            <span class="tag">A平面主备: 北/中</span>
+            <span class="tag">B平面主备: 南/中</span>
+        </div>
+        <div class="legend">
+            <div class="legend-item"><div class="dot" style="background:#00ffff"></div>A平面流</div>
+            <div class="legend-item"><div class="dot" style="background:#ffaa00"></div>B平面流</div>
+            <div class="legend-item"><div class="dot" style="background:#666"></div>空闲备用</div>
+        </div>
+    </div>
+
+    <div id="controls-container">
+        <!-- Strategy Control -->
+        <div class="panel">
+            <div class="section-title">⚙️ 保护策略配置 (OLP Strategy)</div>
+            <div style="display:flex; gap:10px; margin-bottom:10px;">
+                <button id="strat-1plus1" class="strategy-btn selected" onclick="setStrategy('1+1')">1+1 (双发选收)</button>
+                <button id="strat-1to1" class="strategy-btn" onclick="setStrategy('1:1')">1:1 (主备倒换)</button>
+            </div>
+            <div id="strategy-desc" style="font-size:11px; color:#aaa; line-height:1.4;">
+                当前：双发选收模式。为了最高可靠性，备用路由始终保持并发传输，无切换延迟。
+            </div>
+        </div>
+
+        <!-- AI Control -->
+        <div class="panel">
+            <div class="section-title">🤖 Gemini 智能中控</div>
+            <div class="ai-box">
+                <input type="text" id="ai-input" placeholder="输入指令 (如: 切换到1:1模式)..." onkeydown="if(event.key==='Enter') runAI()">
+                <button class="ai-btn" onclick="runAI()">执行</button>
+            </div>
+            <button onclick="diagnose()" style="text-align:center; color:#aaeeff; border-color:#0088aa;">📊 诊断当前策略</button>
+            <div id="ai-output">系统就绪。</div>
+        </div>
+
+        <!-- Real-time Logic Status -->
+        <div class="panel">
+            <div class="section-title">📡 路由状态监控</div>
+            <div style="font-size:11px; line-height:1.6;">
+                <div style="color:#00ffff; border-bottom:1px dashed #334455; padding-bottom:4px; margin-bottom:4px;">
+                    <strong>平面 A (SR8)</strong><br>
+                    <span id="status-a-route1">⚫ 北线(主): ...</span><br>
+                    <span id="status-a-route2">⚫ 中线(备): ...</span>
+                </div>
+                <div style="color:#ffaa00;">
+                    <strong>平面 B (FR4)</strong><br>
+                    <span id="status-b-route3">⚫ 南线(主): ...</span><br>
+                    <span id="status-b-route2">⚫ 中线(备): ...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="panel">
+            <div class="section-title">🔧 故障模拟</div>
+            <button id="btn-planeA" class="active" onclick="togglePlane('A')">🔵 平面 A (设备供电)</button>
+            <button id="btn-planeB" class="active" onclick="togglePlane('B')">🟠 平面 B (设备供电)</button>
+            <div style="height:8px"></div>
+            <button id="btn-r1" class="danger" onclick="toggleRoute(1)">🔴 北线光缆 (A主)</button>
+            <button id="btn-r2" class="danger" onclick="toggleRoute(2)">🔴 中线光缆 (共备)</button>
+            <button id="btn-r3" class="danger" onclick="toggleRoute(3)">🔴 南线光缆 (B主)</button>
+        </div>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+</body>
+</html>

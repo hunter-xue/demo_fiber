@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>华为 DC908 保护策略演示 (1+1 vs 1:1)</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050a10; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        
+        #header {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            z-index: 100;
+            pointer-events: none;
+            background: rgba(0,0,0,0.7);
+            padding: 15px;
+            border-left: 4px solid #00ffff;
+            backdrop-filter: blur(4px);
+            border-radius: 0 4px 4px 0;
+            box-shadow: 0 0 15px rgba(0,0,0,0.5);
+        }
+        h1 { margin: 0; font-size: 20px; text-shadow: 0 0 10px #00ffff; color: #fff; }
+        .subtitle { color: #aaa; font-size: 12px; margin-top: 5px; }
+        .tag { display: inline-block; background: #004455; color: #00ffff; padding: 2px 6px; border-radius: 3px; font-size: 11px; margin-right: 5px; border: 1px solid #0088aa; }
+        .highlight { color: #ffaa00; font-weight: bold; }
+
+        #controls-container {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 340px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            max-height: 95vh;
+            overflow-y: auto;
+        }
+
+        .panel {
+            background: rgba(10, 25, 40, 0.9);
+            border: 1px solid #006688;
+            padding: 15px;
+            border-radius: 6px;
+            color: #ccc;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        }
+
+        .section-title {
+            color: #00ffff;
+            font-size: 13px;
+            font-weight: bold;
+            border-bottom: 1px solid #004455;
+            padding-bottom: 5px;
+            margin-bottom: 10px;
+        }
+
+        button {
+            background: linear-gradient(to bottom, #003344, #002233);
+            border: 1px solid #005566;
+            color: #ddd;
+            padding: 8px;
+            width: 100%;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 12px;
+            margin-bottom: 6px;
+            text-align: left;
+        }
+        button:hover { background: #004455; border-color: #007799; color: white; }
+        
+        button.active { 
+            background: linear-gradient(to right, #004466, #002233); 
+            border-left: 3px solid #00ffff; 
+            color: #fff; 
+        }
+        
+        /* 策略切换按钮 */
+        .strategy-btn {
+            text-align: center;
+            font-weight: bold;
+            border: 1px solid #00aaaa;
+        }
+        .strategy-btn.selected {
+            background: #00ccff;
+            color: #000;
+            box-shadow: 0 0 10px #00ccff;
+        }
+        
+        button.danger { border-color: #883333; color: #ffcccc; }
+        button.danger.active { background: #441111; border-left: 3px solid #ff0000; color: #ff5555; }
+
+        .ai-box { display: flex; gap: 5px; margin-bottom: 10px; }
+        input[type="text"] {
+            flex: 1;
+            background: rgba(0,0,0,0.4);
+            border: 1px solid #005566;
+            color: white;
+            padding: 6px;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+        .ai-btn { width: auto; background: #005566; }
+        #ai-output { font-family: monospace; font-size: 11px; color: #00ffaa; background: rgba(0,0,0,0.6); padding: 8px; min-height: 40px; white-space: pre-wrap; }
+        
+        .status-val.ok { color: #00ff00; }
+        .status-val.warn { color: #ffaa00; }
+        .status-val.err { color: #ff3333; }
+        .status-val.idle { color: #888; font-style: italic; } /* 闲置状态 */
+
+        .legend { font-size: 11px; color: #888; margin-top: 5px; display: flex; flex-wrap: wrap; gap: 8px; }
+        .legend-item { display: flex; align-items: center; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+
+    <div id="header">
+        <h1>华为 DC908 保护策略演示</h1>
+        <div class="subtitle">策略控制: 支持 1+1并发 与 1:1主备 动态切换</div>
+        <div style="margin-top: 10px;">
+            <span class="tag">当前模式: <span id="mode-badge" class="highlight">1+1 (并发)</span></span>
+            <span class="tag">A平面主备: 北/中</span>
+            <span class="tag">B平面主备: 南/中</span>
+        </div>
+        <div class="legend">
+            <div class="legend-item"><div class="dot" style="background:#00ffff"></div>A平面流</div>
+            <div class="legend-item"><div class="dot" style="background:#ffaa00"></div>B平面流</div>
+            <div class="legend-item"><div class="dot" style="background:#666"></div>空闲备用</div>
+        </div>
+    </div>
+
+    <div id="controls-container">
+        <!-- Strategy Control -->
+        <div class="panel">
+            <div class="section-title">⚙️ 保护策略配置 (OLP Strategy)</div>
+            <div style="display:flex; gap:10px; margin-bottom:10px;">
+                <button id="strat-1plus1" class="strategy-btn selected" onclick="setStrategy('1+1')">1+1 (双发选收)</button>
+                <button id="strat-1to1" class="strategy-btn" onclick="setStrategy('1:1')">1:1 (主备倒换)</button>
+            </div>
+            <div id="strategy-desc" style="font-size:11px; color:#aaa; line-height:1.4;">
+                当前：双发选收模式。为了最高可靠性，备用路由始终保持并发传输，无切换延迟。
+            </div>
+        </div>
+
+        <!-- AI Control -->
+        <div class="panel">
+            <div class="section-title">🤖 Gemini 智能中控</div>
+            <div class="ai-box">
+                <input type="text" id="ai-input" placeholder="输入指令 (如: 切换到1:1模式)..." onkeydown="if(event.key==='Enter') runAI()">
+                <button class="ai-btn" onclick="runAI()">执行</button>
+            </div>
+            <button onclick="diagnose()" style="text-align:center; color:#aaeeff; border-color:#0088aa;">📊 诊断当前策略</button>
+            <div id="ai-output">系统就绪。</div>
+        </div>
+
+        <!-- Real-time Logic Status -->
+        <div class="panel">
+            <div class="section-title">📡 路由状态监控</div>
+            <div style="font-size:11px; line-height:1.6;">
+                <div style="color:#00ffff; border-bottom:1px dashed #334455; padding-bottom:4px; margin-bottom:4px;">
+                    <strong>平面 A (SR8)</strong><br>
+                    <span id="status-a-route1">⚫ 北线(主): ...</span><br>
+                    <span id="status-a-route2">⚫ 中线(备): ...</span>
+                </div>
+                <div style="color:#ffaa00;">
+                    <strong>平面 B (FR4)</strong><br>
+                    <span id="status-b-route3">⚫ 南线(主): ...</span><br>
+                    <span id="status-b-route2">⚫ 中线(备): ...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="panel">
+            <div class="section-title">🔧 故障模拟</div>
+            <button id="btn-planeA" class="active" onclick="togglePlane('A')">🔵 平面 A (设备供电)</button>
+            <button id="btn-planeB" class="active" onclick="togglePlane('B')">🟠 平面 B (设备供电)</button>
+            <div style="height:8px"></div>
+            <button id="btn-r1" class="danger" onclick="toggleRoute(1)">🔴 北线光缆 (A主)</button>
+            <button id="btn-r2" class="danger" onclick="toggleRoute(2)">🔴 中线光缆 (共备)</button>
+            <button id="btn-r3" class="danger" onclick="toggleRoute(3)">🔴 南线光缆 (B主)</button>
+        </div>
+    </div>
+
+    <script>
+        const apiKey = ""; 
+
+        // State
+        const state = { 
+            planeA: true, planeB: true, 
+            route1: true, route2: true, route3: true,
+            strategy: '1+1' // '1+1' or '1:1'
+        };
+        
+        // Globals
+        let scene, camera, renderer, controls;
+        const routes = {};
+        const connectPoints = { A: {}, B: {} };
+        const particleSystems = {
+            A_Main: [],   A_Backup: [],
+            B_Main: [],   B_Backup: []
+        };
+
+        const CONFIG = {
+            siteOffset: 90, 
+            elecOffset: 120, 
+            colors: {
+                planeA: 0x00ffff, planeB: 0xffaa00,
+                elecDev: 0xffcc00, optDev: 0x0088cc,  
+                fiberA: 0x0066aa, fiberB: 0xaa5500,
+                broken: 0x330000, relay: 0xeeeeee
+            }
+        };
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x050a10, 0.001);
+
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 140, 300); 
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setClearColor(0x050a10);
+            document.body.appendChild(renderer.domElement);
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.autoRotate = false;
+            controls.maxPolarAngle = Math.PI / 2 - 0.05;
+
+            // Lights
+            scene.add(new THREE.AmbientLight(0x404040));
+            const dl = new THREE.DirectionalLight(0xffffff, 1);
+            dl.position.set(30, 80, 50);
+            scene.add(dl);
+            const sl1 = new THREE.PointLight(0x00ffff, 0.5, 150); sl1.position.set(-CONFIG.siteOffset, 60, 20); scene.add(sl1);
+            const sl2 = new THREE.PointLight(0xffaa00, 0.5, 150); sl2.position.set(CONFIG.siteOffset, 60, 20); scene.add(sl2);
+            scene.add(new THREE.GridHelper(600, 60, 0x112233, 0x050a10));
+
+            createSiteStructure();
+            createRoutes();
+            createParticles();
+
+            window.addEventListener('resize', onResize);
+            updateStatus();
+            animate();
+        }
+
+        // --- 1. 创建站点与设备 ---
+        function createSiteStructure() {
+            // Simplified Room
+            const createRoom = (x) => {
+                const geo = new THREE.BoxGeometry(70, 55, 50);
+                const edges = new THREE.EdgesGeometry(geo);
+                const mat = new THREE.LineBasicMaterial({ color: 0x334455, opacity: 0.3, transparent: true });
+                const mesh = new THREE.LineSegments(edges, mat);
+                mesh.position.set(x, 27.5, 0);
+                scene.add(mesh);
+            };
+            createRoom(-105); createRoom(105);
+
+            // 设备创建逻辑 (同前)
+            const elecGeo = new THREE.BoxGeometry(8, 6, 12);
+            const createElecStack = (siteX) => {
+                const elecA = new THREE.Mesh(elecGeo, new THREE.MeshPhongMaterial({ color: CONFIG.colors.elecDev, emissive: 0x332200 }));
+                elecA.position.set(siteX, 25, -10); scene.add(elecA);
+                const elecB = new THREE.Mesh(elecGeo, new THREE.MeshPhongMaterial({ color: CONFIG.colors.elecDev, emissive: 0x332200 }));
+                elecB.position.set(siteX, 10, -10); scene.add(elecB);
+            };
+            createElecStack(-CONFIG.elecOffset); createElecStack(CONFIG.elecOffset);
+
+            // 光设备
+            const optGeo = new THREE.BoxGeometry(6, 4, 8);
+            const createOptStack = (siteX, zOffset, isConnector, isLeft) => {
+                const optA = new THREE.Mesh(optGeo, new THREE.MeshPhongMaterial({ color: CONFIG.colors.optDev, emissive: 0x001122 }));
+                optA.position.set(siteX, 18, zOffset); scene.add(optA);
+                const optB = new THREE.Mesh(optGeo, new THREE.MeshPhongMaterial({ color: CONFIG.colors.optDev, emissive: 0x001122 }));
+                optB.position.set(siteX, 8, zOffset); scene.add(optB);
+
+                const pt = isLeft ? connectPoints.A : connectPoints.B;
+                const dir = isLeft ? 1 : -1;
+                if (isConnector) {
+                    pt.optTop = new THREE.Vector3(siteX + 3*dir, 18, zOffset);
+                    pt.optBot = new THREE.Vector3(siteX + 3*dir, 8, zOffset);
+                }
+            };
+
+            createOptStack(-CONFIG.siteOffset - 8, -10, false, true); // Mux
+            createOptStack(-CONFIG.siteOffset + 2, 0, true, true);    // Amp (Connector)
+            createOptStack(-CONFIG.siteOffset + 10, 12, false, true); // OLP
+
+            createOptStack(CONFIG.siteOffset + 8, -10, false, false);
+            createOptStack(CONFIG.siteOffset - 2, 0, true, false);
+            createOptStack(CONFIG.siteOffset - 10, 12, false, false);
+        }
+
+        // --- 2. 创建路由 ---
+        function createRoutes() {
+            const defs = [
+                { id: 1, name: "北线", z: -55 },
+                { id: 2, name: "中线", z: 0 },
+                { id: 3, name: "南线", z: 55 }
+            ];
+            const startT = connectPoints.A.optTop; 
+            const startB = connectPoints.A.optBot;
+            const endT = connectPoints.B.optTop;   
+            const endB = connectPoints.B.optBot;
+
+            defs.forEach(d => {
+                const group = new THREE.Group();
+                const dist = endT.x - startT.x;
+                const ctrlX1 = startT.x + dist * 0.25;
+                const ctrlX2 = startT.x + dist * 0.75;
+                const midY = 12; const yGap = 4;
+
+                const createCurve = (s, e, yOff) => new THREE.CatmullRomCurve3([
+                    s, new THREE.Vector3(s.x+20, s.y, s.z),
+                    new THREE.Vector3(ctrlX1, midY+yOff, d.z), new THREE.Vector3(ctrlX2, midY+yOff, d.z),
+                    new THREE.Vector3(e.x-20, e.y, e.z), e
+                ]);
+
+                const curveA = createCurve(startT, endT, yGap);
+                const curveB = createCurve(startB, endB, -yGap);
+
+                const matA = new THREE.MeshPhongMaterial({ color: CONFIG.colors.fiberA, transparent: true, opacity: 0.5 });
+                const matB = new THREE.MeshPhongMaterial({ color: CONFIG.colors.fiberB, transparent: true, opacity: 0.5 });
+                group.add(new THREE.Mesh(new THREE.TubeGeometry(curveA, 120, 0.4, 8, false), matA));
+                group.add(new THREE.Mesh(new THREE.TubeGeometry(curveB, 120, 0.4, 8, false), matB));
+
+                // Relay
+                const ptA = curveA.getPoint(0.5);
+                const ptB = curveB.getPoint(0.5);
+                const midPos = new THREE.Vector3().lerpVectors(ptA, ptB, 0.5);
+                const relayGroup = new THREE.Group(); relayGroup.position.copy(midPos);
+                
+                const boxGeo = new THREE.BoxGeometry(4, 3, 4);
+                const boxMat = new THREE.MeshLambertMaterial({color: CONFIG.colors.relay});
+                const rA = new THREE.Mesh(boxGeo, boxMat); rA.position.copy(ptA).sub(midPos);
+                const rB = new THREE.Mesh(boxGeo, boxMat); rB.position.copy(ptB).sub(midPos);
+                relayGroup.add(rA); relayGroup.add(rB);
+                relayGroup.add(new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, ptA.y-ptB.y), new THREE.MeshBasicMaterial({color:0x666})));
+                group.add(relayGroup);
+
+                // Labels
+                addLabel(midPos.x, midPos.y+10, d.name, 12, midPos.z, "rgba(0,50,80,0.6)");
+
+                scene.add(group);
+                routes[d.id] = { group, curveA, curveB, relays: [rA, rB], meshA: group.children[0], meshB: group.children[1] };
+            });
+        }
+
+        function createParticles() {
+            const geo = new THREE.SphereGeometry(0.5, 8, 8);
+            const createPool = (arr, color) => {
+                for(let i=0; i<60; i++){
+                    const p = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: color }));
+                    p.userData = { progress: Math.random(), speed: 0.002 + Math.random()*0.002 };
+                    scene.add(p);
+                    arr.push(p);
+                }
+            };
+            createPool(particleSystems.A_Main, CONFIG.colors.planeA);
+            createPool(particleSystems.A_Backup, CONFIG.colors.planeA);
+            createPool(particleSystems.B_Main, CONFIG.colors.planeB);
+            createPool(particleSystems.B_Backup, CONFIG.colors.planeB);
+        }
+
+        // --- Logic Engine (Support for Strategy) ---
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+
+            // A平面逻辑
+            // 主路由: Route 1 (北)
+            // 备路由: Route 2 (中)
+            
+            let aMainActive = false;
+            let aBackupActive = false;
+
+            if (state.planeA) {
+                if (state.strategy === '1+1') {
+                    // 1+1: 双发，只要路通就跑
+                    if (state.route1) aMainActive = true;
+                    if (state.route2) aBackupActive = true;
+                } else {
+                    // 1:1: 主用优先，主断才切备
+                    if (state.route1) {
+                        aMainActive = true; 
+                        aBackupActive = false; // 备用路闲置
+                    } else if (state.route2) {
+                        aMainActive = false;
+                        aBackupActive = true; // 主断，切备
+                    }
+                }
+            }
+            updateSystem(particleSystems.A_Main, 1, 'curveA', aMainActive);
+            updateSystem(particleSystems.A_Backup, 2, 'curveA', aBackupActive);
+
+
+            // B平面逻辑
+            // 主路由: Route 3 (南)
+            // 备路由: Route 2 (中)
+            
+            let bMainActive = false;
+            let bBackupActive = false;
+
+            if (state.planeB) {
+                if (state.strategy === '1+1') {
+                    if (state.route3) bMainActive = true;
+                    if (state.route2) bBackupActive = true;
+                } else {
+                    if (state.route3) {
+                        bMainActive = true;
+                        bBackupActive = false;
+                    } else if (state.route2) {
+                        bMainActive = false;
+                        bBackupActive = true;
+                    }
+                }
+            }
+            updateSystem(particleSystems.B_Main, 3, 'curveB', bMainActive);
+            updateSystem(particleSystems.B_Backup, 2, 'curveB', bBackupActive);
+
+
+            renderer.render(scene, camera);
+        }
+
+        function updateSystem(system, routeId, curveKey, isActive) {
+            const r = routes[routeId];
+            system.forEach(p => {
+                p.visible = isActive;
+                if(isActive) {
+                    p.userData.progress += p.userData.speed;
+                    if(p.userData.progress > 1) p.userData.progress = 0;
+                    p.position.copy(r[curveKey].getPoint(p.userData.progress));
+                }
+            });
+        }
+
+        // --- UI & Interactions ---
+        window.setStrategy = (mode) => {
+            state.strategy = mode;
+            document.getElementById('strat-1plus1').className = mode==='1+1' ? 'strategy-btn selected' : 'strategy-btn';
+            document.getElementById('strat-1to1').className = mode==='1:1' ? 'strategy-btn selected' : 'strategy-btn';
+            document.getElementById('mode-badge').innerText = mode + (mode==='1+1'?' (并发)':' (主备)');
+            
+            const desc = mode==='1+1' 
+                ? "当前：双发选收模式。为了最高可靠性，备用路由始终保持并发传输，无切换延迟。"
+                : "当前：主备倒换模式。平时备用路由空闲(节省处理资源)，仅在主路由中断时启用。";
+            document.getElementById('strategy-desc').innerText = desc;
+            updateStatus();
+        };
+
+        window.togglePlane = (p) => {
+            state['plane'+p] = !state['plane'+p];
+            document.getElementById('btn-plane'+p).className = state['plane'+p] ? 'active' : '';
+            updateStatus();
+        };
+
+        window.toggleRoute = (id) => {
+            const k = 'route'+id;
+            state[k] = !state[k];
+            const btn = document.getElementById('btn-r'+id);
+            const r = routes[id];
+            if(state[k]){
+                btn.className = 'danger';
+                r.meshA.material.color.setHex(CONFIG.colors.fiberA); r.meshA.material.opacity=0.5;
+                r.meshB.material.color.setHex(CONFIG.colors.fiberB); r.meshB.material.opacity=0.5;
+                r.relays.forEach(box => box.material.color.setHex(CONFIG.colors.relay));
+            } else {
+                btn.className = 'danger active';
+                r.meshA.material.color.setHex(CONFIG.colors.broken); r.meshA.material.opacity=0.1;
+                r.meshB.material.color.setHex(CONFIG.colors.broken); r.meshB.material.opacity=0.1;
+                r.relays.forEach(box => box.material.color.setHex(0x550000));
+            }
+            updateStatus();
+        };
+
+        function updateStatus() {
+            const getStatus = (routeOk, isMain) => {
+                if (state.strategy === '1+1') {
+                    // 1+1: 只要路通就工作
+                    return routeOk ? "<span class='status-val ok'>工作中</span>" : "<span class='status-val err'>中断</span>";
+                } else {
+                    // 1:1
+                    if (!routeOk) return "<span class='status-val err'>中断</span>";
+                    // 路通，看是否激活
+                    // 简易判断：如果是主路，通则工作；如果是备路，主路通则闲置
+                    if (isMain) return "<span class='status-val ok'>工作中</span>";
+                    // 备路逻辑：主路断了吗？
+                    const mainOk = (state.planeA && state.route1) || (state.planeB && state.route3); // 这里简化判断
+                    // 准确判断逻辑：
+                    // A备(R2): 依赖 A主(R1)
+                    // B备(R2): 依赖 B主(R3)
+                    // 只能动态刷新
+                    return "<span class='status-val idle'>计算中</span>"; // 由 animate 循环处理，这里仅静态
+                }
+            };
+            
+            // 动态逻辑比较复杂，我们在 animate 中直接决定了粒子显隐
+            // 这里为了 UI 显示，复用一部分逻辑
+            const aMainOk = state.route1;
+            const aBackOk = state.route2;
+            const bMainOk = state.route3;
+            const bBackOk = state.route2;
+
+            let a1, a2, b3, b2;
+
+            if (state.strategy === '1+1') {
+                a1 = aMainOk ? "<span class='status-val ok'>工作中 (并发)</span>" : "<span class='status-val err'>中断</span>";
+                a2 = aBackOk ? "<span class='status-val ok'>工作中 (并发)</span>" : "<span class='status-val err'>中断</span>";
+                b3 = bMainOk ? "<span class='status-val ok'>工作中 (并发)</span>" : "<span class='status-val err'>中断</span>";
+                b2 = bBackOk ? "<span class='status-val ok'>工作中 (并发)</span>" : "<span class='status-val err'>中断</span>";
+            } else {
+                // 1:1
+                a1 = aMainOk ? "<span class='status-val ok'>主用工作中</span>" : "<span class='status-val err'>中断</span>";
+                a2 = (!aMainOk && aBackOk) ? "<span class='status-val warn'>备用激活!</span>" : (aBackOk ? "<span class='status-val idle'>闲置待命</span>" : "<span class='status-val err'>中断</span>");
+                
+                b3 = bMainOk ? "<span class='status-val ok'>主用工作中</span>" : "<span class='status-val err'>中断</span>";
+                b2 = (!bMainOk && bBackOk) ? "<span class='status-val warn'>备用激活!</span>" : (bBackOk ? "<span class='status-val idle'>闲置待命</span>" : "<span class='status-val err'>中断</span>");
+            }
+
+            document.getElementById('status-a-route1').innerHTML = `⚫ 北线(主): ${a1}`;
+            document.getElementById('status-a-route2').innerHTML = `⚫ 中线(备): ${a2}`;
+            document.getElementById('status-b-route3').innerHTML = `⚫ 南线(主): ${b3}`;
+            document.getElementById('status-b-route2').innerHTML = `⚫ 中线(备): ${b2}`;
+        }
+
+        window.runAI = async () => {
+            const txt = document.getElementById('ai-input').value;
+            if(!txt) return;
+            const out = document.getElementById('ai-output');
+            out.innerText = "Gemini 解析中...";
+            const prompt = `网络AI控制。用户指令:"${txt}"。
+            网络状态对象: {planeA, planeB, route1, route2, route3, strategy}。
+            strategy值只能是 '1+1' 或 '1:1'。
+            返回JSON格式的变更，例如 {"strategy": "1:1", "route1": false}。`;
+            
+            try {
+                const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+                });
+                const json = JSON.parse((await res.json()).candidates[0].content.parts[0].text.replace(/```json|```/g, ''));
+                let changes = [];
+                for(let k in json) {
+                    if(state[k] !== json[k]) {
+                        if(k === 'strategy') setStrategy(json[k]);
+                        else if(k.includes('plane')) togglePlane(k.replace('plane',''));
+                        else if(k.includes('route')) toggleRoute(parseInt(k.replace('route','')));
+                        changes.push(k);
+                    }
+                }
+                out.innerText = changes.length ? "已执行: "+changes.join(', ') : "无变更";
+            } catch(e){ out.innerText="Error"; }
+        };
+
+        window.diagnose = async () => {
+            const out = document.getElementById('ai-output');
+            out.innerText = "诊断中...";
+            const data = {
+                "策略": state.strategy,
+                "A平面": state.planeA?"ON":"OFF", "B平面": state.planeB?"ON":"OFF",
+                "北线": state.route1?"OK":"Cut", "中线": state.route2?"OK":"Cut", "南线": state.route3?"OK":"Cut"
+            };
+            const prompt = `生成简短报告: ${JSON.stringify(data)}. 
+            如果是1:1模式，检查主备倒换是否生效；如果是1+1，检查是否双路并发。`;
+            try {
+                const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+                });
+                out.innerText = (await res.json()).candidates[0].content.parts[0].text;
+            } catch(e){ out.innerText="Error"; }
+        };
+
+        function addLabel(x, y, text, size=12, z=0, bg="rgba(0,0,0,0.5)") {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 256; canvas.height = 64;
+            ctx.fillStyle = bg; ctx.fillRect(0,0,256,64);
+            ctx.font = "bold 24px Arial"; ctx.fillStyle = "white"; ctx.textAlign = "center"; ctx.textBaseline="middle";
+            ctx.fillText(text, 128, 32);
+            const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas) }));
+            sp.position.set(x, y, z);
+            sp.scale.set(size, size/4, 1);
+            scene.add(sp);
+        }
+
+        function onResize() {
+            camera.aspect = window.innerWidth/window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        init();
+    </script>
+</body>
+</html>
