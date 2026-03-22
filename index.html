@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>华为 DC908 保护策略演示 (1+1 vs 1:1)</title>
+    <title>双平面三路由高可用专线架构</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #050a10; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         
@@ -89,9 +89,8 @@
         }
         
         button.danger { border-color: #883333; color: #ffcccc; }
-        button.danger.active { background: #441111; border-left: 3px solid #ff0000; color: #ff5555; }
+        button.danger.fault-on { background: #441111; border-left: 3px solid #ff0000; color: #ff5555; }
 
-        .ai-box { display: flex; gap: 5px; margin-bottom: 10px; }
         input[type="text"] {
             flex: 1;
             background: rgba(0,0,0,0.4);
@@ -101,9 +100,6 @@
             border-radius: 3px;
             font-size: 12px;
         }
-        .ai-btn { width: auto; background: #005566; }
-        #ai-output { font-family: monospace; font-size: 11px; color: #00ffaa; background: rgba(0,0,0,0.6); padding: 8px; min-height: 40px; white-space: pre-wrap; }
-        
         .status-val.ok { color: #00ff00; }
         .status-val.warn { color: #ffaa00; }
         .status-val.err { color: #ff3333; }
@@ -117,7 +113,7 @@
 <body>
 
     <div id="header">
-        <h1>华为 DC908 保护策略演示</h1>
+        <h1>双平面三路由高可用专线架构</h1>
         <div class="subtitle">策略控制: 支持 1+1并发 与 1:1主备 动态切换</div>
         <div style="margin-top: 10px;">
             <span class="tag">当前模式: <span id="mode-badge" class="highlight">1+1 (并发)</span></span>
@@ -144,31 +140,22 @@
             </div>
         </div>
 
-        <!-- AI Control -->
-        <div class="panel">
-            <div class="section-title">🤖 Gemini 智能中控</div>
-            <div class="ai-box">
-                <input type="text" id="ai-input" placeholder="输入指令 (如: 切换到1:1模式)..." onkeydown="if(event.key==='Enter') runAI()">
-                <button class="ai-btn" onclick="runAI()">执行</button>
-            </div>
-            <button onclick="diagnose()" style="text-align:center; color:#aaeeff; border-color:#0088aa;">📊 诊断当前策略</button>
-            <div id="ai-output">系统就绪。</div>
-        </div>
 
         <!-- Real-time Logic Status -->
         <div class="panel">
             <div class="section-title">📡 路由状态监控</div>
             <div style="font-size:11px; line-height:1.6;">
                 <div style="color:#00ffff; border-bottom:1px dashed #334455; padding-bottom:4px; margin-bottom:4px;">
-                    <strong>平面 A (SR8)</strong><br>
+                    <strong>平面 A</strong><br>
                     <span id="status-a-route1">⚫ 北线(主): ...</span><br>
                     <span id="status-a-route2">⚫ 中线(备): ...</span>
                 </div>
                 <div style="color:#ffaa00;">
-                    <strong>平面 B (FR4)</strong><br>
+                    <strong>平面 B</strong><br>
                     <span id="status-b-route3">⚫ 南线(主): ...</span><br>
                     <span id="status-b-route2">⚫ 中线(备): ...</span>
                 </div>
+                <div id="status-contention" style="margin-top:6px; font-weight:bold;"></div>
             </div>
         </div>
 
